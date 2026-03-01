@@ -1,0 +1,22 @@
+html {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+}
+
+main::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Edge, Opera */
+}
+
+body {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background-color: black;
+    color: white;
+    font-family: "Palatino Linotype", "Book Antiqua", Palatino, serif;
+    margin: 0px;
+}
+
+a {
+    text-decoration: none;
+}
