@@ -1,0 +1,33 @@
+name: Core Edu - API Part
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'api/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Login to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build API
+      uses: docker/build-push-action@v5
+      with:
+        context: ./api
+        push: true
+        tags: ghcr.io/sverdlovsky/core-edu-api:latest
+        cache-from: type=registry,ref=ghcr.io/sverdlovsky/core-edu-api:latest
+        cache-to: type=registry,ref=ghcr.io/sverdlovsky/core-edu-api:latest,mode=max
+        platforms: linux/amd64
+

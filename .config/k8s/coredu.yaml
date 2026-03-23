@@ -1,0 +1,201 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: coredu
+  labels:
+    type: local
+    app: coredu
+spec:
+  storageClassName: manual
+  hostPath:
+    path: "/var/lib/rancher/k3s/storage/coredu"
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: coredu
+  labels:
+    app: coredu
+spec:
+  storageClassName: manual
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coredu
+  template:
+    metadata:
+      labels:
+        app: coredu
+    spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+      - name: web
+        image: ghcp.io/sverdlovsky/core-edu-web:latest
+        ports:
+        - name: web
+          containerPort: 80
+        volumeMounts:
+        - name: series
+          mountPath: /mnt
+        env:
+        - name: DOMAIN
+          value: ####
+      - name: api
+        image: ghcp.io/sverdlovsky/core-edu-api:latest
+        ports:
+        - name: api
+          containerPort: 8080
+        env:
+        - name: DOMAIN
+          value: ####
+        - name: ADMIN_EMAIL
+          value: #########
+        - name: DATABASE_URL
+          value: postgresql://coredu:coredu_pass@postgres:5432/coredu
+        - name: JWT_SECRET
+          value: ########
+      - name: auth
+        image: ghcp.io/sverdlovsky/core-edu-auth:latest
+        ports:
+        - name: auth
+          containerPort: 8000
+        env:
+        - name: DOMAIN
+          value: ####
+        - name: YANDEX_CLIENT_ID
+          value: ##############
+        - name: YANDEX_CLIENT_SECRET
+          value: ##################
+        - name: GOOGLE_CLIENT_ID
+          value: ##############
+        - name: GOOGLE_CLIENT_SECRET
+          value: ##################
+        - name: GITHUB_CLIENT_ID
+          value: ##############
+        - name: GITHUB_CLIENT_SECRET
+          value: ##################
+        - name: SECRET_KEY
+          value: ########
+        - name: JWT_SECRET
+          value: ########
+      volumes:
+      - name: series
+        persistentVolumeClaim:
+          claimName: coredu
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coredu
+  labels:
+    app: coredu
+spec:
+  type: ClusterIP
+  selector:
+    app: coredu
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: auth
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+    - name: api
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: coredu
+  annotations:
+    ingressClassName: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: default
+spec:
+  tls:
+  - hosts:
+    - example.com
+    - learn.example.com
+    - media.example.com
+    - auth.example.com
+    - api.example.com
+  rules:
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: coredu-root
+            port:
+              name: http
+
+  - host: learn.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: coredu-learn
+            port:
+              name: http
+
+  - host: media.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: coredu-media
+            port:
+              name: http
+
+  - host: auth.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: coredu-auth
+            port:
+              name: auth
+
+  - host: api.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: coredu-api
+            port:
+              name: api
+

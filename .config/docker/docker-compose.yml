@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: docker.io/library/postgres:18.3-alpine3.23
+    expose:
+    - "5432/tcp"
+    volumes:
+    - /var/lib/postgresql:/var/lib/postgresql
+    - ./.config/postgres:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    networks:
+    - internal
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_PORT: 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  web:
+    image: ghcr.io/sverdlovsky/core-edu-web
+    ports:
+    - "80:80/tcp"
+    - "443:443/tcp"
+    - "443:443/udp"
+    volumes:
+    - /etc/letsencrypt:/etc/letsencrypt:ro
+    - ./.config/nginx:/etc/nginx/templates:ro
+    restart: unless-stopped
+    networks:
+    - internal
+    - public
+    environment:
+      DOMAIN: ####
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  api:
+    image: ghcr.io/sverdlovsky/core-edu-api
+    depends_on:
+    - postgres
+    expose:
+      - "8080/tcp"
+    restart: unless-stopped
+    networks:
+    - internal
+    environment:
+      DOMAIN: ####
+      ADMIN_EMAIL: #########
+      DATABASE_URL: postgresql://coredu:coredu_password@postgres:5432/coredu
+      JWT_SECRET: ########
+
+  auth:
+    image: ghcr.io/sverdlovsky/core-edu-auth
+    expose:
+    - "8000/tcp"
+    restart: unless-stopped
+    networks:
+    - internal
+    environment:
+      DOMAIN: ####
+      YANDEX_CLIENT_ID: ##############
+      YANDEX_CLIENT_SECRET: ##################
+      GOOGLE_CLIENT_ID: ##############
+      GOOGLE_CLIENT_SECRET: ##################
+      GITHUB_CLIENT_ID: ##############
+      GITHUB_CLIENT_SECRET: ##################
+      SECRET_KEY: ########
+      JWT_SECRET: ########
+
+networks:
+  internal:
+    driver: bridge
+    internal: true
+
+  public:
+    driver: bridge
+
