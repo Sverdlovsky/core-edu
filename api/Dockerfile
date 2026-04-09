@@ -14,7 +14,8 @@ FROM docker.io/library/alpine:3.23
 
 COPY --from=build /srv/api/target/release/coredu /usr/bin/coredu
 
-RUN adduser -DH user
+RUN addgroup -g 31541 user
+RUN adduser -DH -u 31541 user
 USER user
 
 EXPOSE 8080

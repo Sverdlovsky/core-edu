@@ -9,7 +9,7 @@ use axum::{
         Response,
         Json,
     },
-    routing::get,
+    routing::{get, post},
     serve,
 };
 use axum_extra::extract::CookieJar;
@@ -127,6 +127,12 @@ struct LearnQueryParams {
     source: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct SubmitResultQueryParams {
+    wordId: i64,
+    time: f32,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -148,6 +154,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/series", get(series))
         .route("/packs", get(packs))
         .route("/info/{filename}", get(series_info))
+        .route("/word", get(next_word))
+        .route("/result", post(submit_answer))
         .layer(Extension(Arc::new(state)));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -237,10 +245,10 @@ async fn next_word(
     Extension(state): Extension<Arc<AppState>>,
     Query(params): Query<LearnQueryParams>,
 ) -> impl IntoResponse {
-    let email = state.auth.validate(&jar).ok();
+    let email = state.auth.force_validate(&jar).ok();
 
-    let row: (serde_json::Value,) = match sqlx::query_as("SELECT get_word($1, $2);")
-        .bind(&params.source)
+    let row: (serde_json::Value,) = match sqlx::query_as("SELECT next_word($1);")
+        //.bind(&params.source)
         .bind(&email)
         .fetch_one(&state.db)
         .await
@@ -253,5 +261,27 @@ async fn next_word(
     };
 
     (StatusCode::OK, Json(row.0)).into_response()
+}
+
+async fn submit_answer(
+    jar: CookieJar,
+    Extension(state): Extension<Arc<AppState>>,
+    Json(payload): Json<SubmitResultQueryParams>,
+) -> impl IntoResponse {
+    let email = state.auth.force_validate(&jar).ok();
+
+    match sqlx::query("SELECT submit_answer($1, $2, $3);")
+        .bind(&email)
+        .bind(payload.wordId)
+        .bind(payload.time)
+        .execute(&state.db)
+        .await
+    {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err(e) => {
+            eprintln!("DB error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response()
+        }
+    }
 }
 

@@ -14,16 +14,21 @@ CREATE TABLE Users (
 );
 
 CREATE TABLE Words (
-    word TEXT PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    word TEXT UNIQUE,
+    read TEXT,
+    extra JSONB,
+    lang TEXT,
     cat TIMESTAMP DEFAULT now()
 );
 
 CREATE TABLE Senses (
-    sense TEXT PRIMARY KEY,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sense TEXT UNIQUE,
     cat TIMESTAMP DEFAULT now()
 );
 
-CREATE TABLE Sensepins (
+CREATE TABLE Word_Sense_Links (
     wid INT REFERENCES Words(id) ON DELETE CASCADE,
     sid INT REFERENCES Senses(id) ON DELETE CASCADE,
     PRIMARY KEY (wid, sid)
@@ -32,6 +37,9 @@ CREATE TABLE Sensepins (
 CREATE TABLE Franchises (
     id INT PRIMARY KEY,
     title TEXT,
+    read TEXT,
+    extra JSONB,
+    lang TEXT,
     dsc TEXT,
     score REAL,
     air DATE NOT NULL,
@@ -45,6 +53,9 @@ CREATE TABLE Units (
     chnum SMALLINT NOT NULL,
     num SMALLINT NOT NULL,
     title TEXT NOT NULL,
+    read TEXT,
+    extra JSONB,
+    lang TEXT,
     dsc TEXT,
     eps SMALLINT,
     score REAL,
@@ -55,17 +66,22 @@ CREATE TABLE Units (
 );
 
 CREATE TABLE Episodes (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     fid INT REFERENCES Franchises(id) ON DELETE CASCADE,
     uid INT REFERENCES Units(id) ON DELETE CASCADE,
     chnum SMALLINT NOT NULL,
     num SMALLINT NOT NULL,
+    br BOOLEAN DEFAULT False,
     title TEXT,
+    read TEXT,
+    extra JSONB,
+    lang TEXT,
     dsc TEXT,
     score REAL,
     air DATE,
     cat TIMESTAMP DEFAULT NOW(),
     UNIQUE (fid, chnum),
-    PRIMARY KEY (uid, num)
+    UNIQUE (uid, num)
 );
 
 CREATE TABLE Progresses (
@@ -85,9 +101,8 @@ CREATE TABLE Relations (
 
 CREATE TABLE Views (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    usid SMALLINT REFERENCES Users(id) ON DELETE CASCADE,
-    unid INT REFERENCES Episodes(fid) ON DELETE CASCADE,
-    num INT REFERENCES Episodes(num) ON DELETE CASCADE,
+    uid SMALLINT REFERENCES Users(id) ON DELETE CASCADE,
+    eid INT REFERENCES Episodes(id) ON DELETE CASCADE,
     cat TIMESTAMP DEFAULT NOW()
 );
 
@@ -100,20 +115,21 @@ CREATE TABLE Ratings (
 );
 
 CREATE TABLE Examples (
-    id INT PRIMARY KEY,
-    fid INT REFERENCES Franchises(id) ON DELETE CASCADE,
-    uid INT,
-    num SMALLINT,
-    exampe TEXT NOT NULL,
-    cat TIMESTAMP DEFAULT now(),
-    FOREIGN KEY (uid, num) REFERENCES Episodes(uid, num) ON DELETE CASCADE
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    eid INT REFERENCES Episodes(id),
+    example TEXT NOT NULL,
+    read TEXT,
+    extra JSONB,
+    lang TEXT,
+    cat TIMESTAMP DEFAULT now()
 );
 
-CREATE TABLE Examplepins (
-    wid INT REFERENCES Words(id) ON DELETE CASCADE,
+CREATE TABLE Example_Word_Links (
     eid INT REFERENCES Examples(id) ON DELETE CASCADE,
+    wid INT REFERENCES Words(id) ON DELETE CASCADE,
     PRIMARY KEY (wid, eid)
 );
+CREATE INDEX idx_ewl_wid ON example_word_links(wid);
 
 CREATE TABLE Answers (
     uid INT REFERENCES Users(id) ON DELETE CASCADE,
@@ -121,6 +137,20 @@ CREATE TABLE Answers (
     score REAL NOT NULL,
     cat TIMESTAMP PRIMARY KEY DEFAULT now()
 );
+CREATE INDEX idx_answers_uid ON answers(uid);
+CREATE INDEX idx_answers_uid_wid ON answers(uid, wid);
+
+CREATE TABLE Word_Progress (
+    user_id INT REFERENCES Users(id) ON DELETE CASCADE,
+    word_id BIGINT REFERENCES Words(id) ON DELETE CASCADE,
+    mastery REAL DEFAULT 0,
+    confidence REAL DEFAULT 0,
+    attempts INT DEFAULT 0,
+    attempts_since_last INT DEFAULT 0,
+    PRIMARY KEY (user_id, word_id)
+);
+CREATE INDEX idx_wp_user ON word_progress(user_id);
+CREATE INDEX idx_wp_user_word ON word_progress(user_id, word_id);
 
 CREATE OR REPLACE FUNCTION get_units (
     in_offset INT DEFAULT 0,
@@ -230,93 +260,184 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
+CREATE OR REPLACE FUNCTION init_user_progress(p_user_id BIGINT)
+RETURNS VOID AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM word_progress WHERE user_id = p_user_id
+  ) THEN
+    RETURN;
+  END IF;
+
+  INSERT INTO word_progress (user_id, word_id)
+  SELECT p_user_id, wf.wid
+  FROM word_frequency wf
+  ORDER BY wf.freq DESC
+  LIMIT 10;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION next_word(
   p_user_id BIGINT,
   p_limit INT DEFAULT 1
 )
-RETURNS TABLE(word_id BIGINT) AS $$
+RETURNS JSONB AS $$
+DECLARE
+  result JSONB;
 BEGIN
-  RETURN query
-  WITH stats AS (
+  PERFORM init_user_progress(p_user_id);
+
+  WITH
+  stats AS (
     SELECT
       wp.word_id,
-      w.difficulty,
+      --w.difficulty,
       wp.mastery,
       wp.confidence,
       wp.attempts,
       wp.attempts_since_last,
 
-      -- uncertainty
       1.0 / sqrt(wp.attempts + 1) as uncertainty,
 
-      -- neglect по попыткам
       ln(wp.attempts_since_last + 1) as neglect,
 
-      -- entropy
-      CASE
-	WHEN wp.mastery <= 0 OR wp.mastery >= 1 THEN 0
-	ELSE -wp.mastery * ln(wp.mastery)
-             - (1 - wp.mastery) * ln(1 - wp.mastery)
+      CASE 
+        WHEN wp.mastery <= 0 OR wp.mastery >= 1 THEN 0
+        ELSE -wp.mastery * ln(wp.mastery) - (1 - wp.mastery) * ln(1 - wp.mastery)
       END AS entropy
     FROM word_progress wp
-    JOIN words w ON w.id = wp.word_id
+    --JOIN words w ON w.id = wp.word_id
     WHERE wp.user_id = p_user_id
+  ),
+
+  selected AS (
+    SELECT word_id
+    FROM stats
+    ORDER BY
+      --difficulty
+      (1 - mastery)
+      * entropy
+      * uncertainty
+      * neglect DESC
+    LIMIT p_limit
+  ),
+
+  random_example AS (
+    SELECT DISTINCT ON (ewl.wid)
+      ewl.wid,
+      e.id,
+      e.example,
+      e.extra
+    FROM example_word_links ewl
+    JOIN examples e ON e.id = ewl.eid
+    ORDER BY ewl.wid, random()
+  ),
+
+  senses_agg AS (
+    SELECT
+      wsl.wid,
+      JSONB_AGG(s.sense) AS senses
+    FROM word_sense_links wsl
+    JOIN senses s ON s.id = wsl.sid
+    GROUP BY wsl.wid
   )
-  SELECT word_id
-  FROM stats
-  ORDER BY
-    difficulty
-    * (1 - mastery)
-    * entropy
-    * uncertainty
-    * neglect DESC
-  LIMIT p_limit;
+
+  SELECT jsonb_build_object(
+    'lang', w.lang,
+
+    'word', jsonb_build_object(
+      'id', w.id,
+      'text', w.word,
+      'extra', w.extra
+    ),
+
+    'example', jsonb_build_object(
+      'id', re.id,
+      'text', re.example,
+      'extra', re.extra
+    ),
+
+    'senses', COALESCE(sa.senses, '[]'::jsonb)
+  )
+  INTO result
+  FROM selected s1
+  JOIN words w ON w.id = s1.word_id
+  LEFT JOIN random_example re ON re.wid = w.id
+  LEFT JOIN senses_agg sa ON sa.wid = w.id;
+
+  RETURN result;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
 CREATE OR REPLACE FUNCTION submit_answer(
   p_user_id BIGINT,
   p_word_id BIGINT,
-  p_correct BOOLEAN,
   p_response_time REAL
 )
 RETURNS VOID AS $$
 DECLARE
   v_score REAL;
-  v_alpha REAL;
 BEGIN
-  -- считаем score
-  IF NOT p_correct THEN
-    v_score := 0;
-  ELSE
-    IF p_response_time <= 2 THEN
-      v_score := 1 - (p_response_time / 4); -- 1.0 .. 0.5
-    ELSIF p_response_time < 4 THEN
-      v_score := (4 - p_response_time) / 4; -- 0.5 .. 0.0
-    ELSE
-      v_score := 0;
-    END IF;
-  END IF;
+  v_score := 1.1*(1/(1+EXP(p_response_time)/EXP(2.5))); -- Sigmoid + Abjustment
+
+  INSERT INTO Answers(uid, wid, score) VALUES (p_user_id, p_word_id, v_score);
 
   UPDATE word_progress
   SET
     attempts = attempts + 1,
-    attempts_since_last = 0,
+    attempts_since_last = -1,
 
-    -- confidence растёт всегда
     confidence = confidence + 0.1 * (1 - confidence),
 
-    -- adaptive alpha
-    mastery = mastery * (1 - (0.05 + 0.1 * confidence))
-              + v_score * (0.05 + 0.1 * confidence)
+    mastery = mastery * (1 - (0.05 + 0.1 * confidence)) + v_score * (0.05 + 0.1 * confidence)
   WHERE user_id = p_user_id
     AND word_id = p_word_id;
 
-  -- все остальные слова считаем "пропущенными"
   UPDATE word_progress
   SET attempts_since_last = attempts_since_last + 1
-  WHERE user_id = p_user_id
-    AND word_id <> p_word_id;
+  WHERE user_id = p_user_id AND word_id <> p_word_id;
+
+  PERFORM add_next_word(p_user_id);
 END;
 $$ LANGUAGE plpgsql STABLE;
+
+CREATE MATERIALIZED VIEW word_frequency AS
+SELECT wid, COUNT(*) as freq
+FROM example_word_links
+GROUP BY wid;
+CREATE INDEX idx_word_freq ON word_frequency(freq DESC);
+
+CREATE OR REPLACE FUNCTION add_next_word(p_user_id BIGINT)
+RETURNS VOID AS $$
+DECLARE
+  v_avg_mastery REAL;
+  v_new_word_id BIGINT;
+BEGIN
+  SELECT AVG(mastery)
+  INTO v_avg_mastery
+  FROM word_progress
+  WHERE user_id = p_user_id;
+
+  IF v_avg_mastery IS NULL OR v_avg_mastery <= 0.8 THEN
+    RETURN;
+  END IF;
+
+  SELECT wf.wid
+  INTO v_new_word_id
+  FROM word_frequency wf
+  LEFT JOIN word_progress wp
+    ON wp.word_id = wf.wid
+   AND wp.user_id = p_user_id
+  WHERE wp.word_id IS NULL
+  ORDER BY wf.freq DESC
+  LIMIT 1;
+
+  IF v_new_word_id IS NOT NULL THEN
+    INSERT INTO word_progress (user_id, word_id)
+    VALUES (p_user_id, v_new_word_id)
+    ON CONFLICT DO NOTHING;
+  END IF;
+
+END;
+$$ LANGUAGE plpgsql;
 
