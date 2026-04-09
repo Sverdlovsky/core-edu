@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, HTTPException
 from starlette.responses import Response
 from starlette.config import Config
 import jwt, json, datetime, os
+import psycopg
 
 
 JWT_EXP = datetime.timedelta(hours=12)
