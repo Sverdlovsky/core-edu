@@ -1,5 +1,5 @@
-from starlette.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from fastapi import FastAPI, Request, HTTPException
 from starlette.responses import Response
@@ -12,7 +12,7 @@ JWT_EXP = datetime.timedelta(hours=12)
 config = Config()
 
 app = FastAPI()
-app.add_middleware(ProxyHeadersMiddleware, secret_key=config('SECRET_KEY'))
+app.add_middleware(SessionMiddleware, secret_key=config('SECRET_KEY'))
 config('JWT_SECRET')
 
 oauth = OAuth(config)
