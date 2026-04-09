@@ -13,5 +13,5 @@ USER user
 
 EXPOSE 8000
 
-ENTRYPOINT [ "fastapi", "run", "/app/srt/App.py", "--port", "8000" ]
+ENTRYPOINT [ "fastapi", "run", "/app/src/App.py", "--port", "8000" ]
 
