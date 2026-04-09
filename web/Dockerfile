@@ -7,8 +7,8 @@ COPY root/package.json .
 
 RUN npm ci
 
-COPY root/src .
-COPY root/static .
+COPY root/src src
+COPY root/static static
 COPY root/svelte.config.js .
 COPY root/tsconfig.json .
 COPY root/vite.config.ts .
@@ -23,8 +23,8 @@ COPY learn/package.json .
 
 RUN npm ci
 
-COPY learn/src .
-COPY learn/static .
+COPY learn/src src
+COPY learn/static static
 COPY learn/svelte.config.js .
 COPY learn/tsconfig.json .
 COPY learn/vite.config.ts .

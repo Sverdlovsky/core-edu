@@ -1,10 +1,17 @@
 FROM docker.io/library/rust:1.94.0-alpine3.23 AS build
 
+RUN apk add \
+    openssl-dev \
+    musl-dev \
+    perl \
+    make \
+    gcc
+
 WORKDIR /srv/api
 
-COPY api/Cargo.lock .
-COPY api/Cargo.toml .
-COPY api/src .
+COPY Cargo.lock .
+COPY Cargo.toml .
+COPY src src
 
 RUN cargo build --release
 
@@ -15,7 +22,7 @@ FROM docker.io/library/alpine:3.23
 COPY --from=build /srv/api/target/release/coredu /usr/bin/coredu
 
 RUN addgroup -g 31541 user
-RUN adduser -DH -u 31541 user
+RUN adduser -DH -u 31541 -G user user
 USER user
 
 EXPOSE 8080

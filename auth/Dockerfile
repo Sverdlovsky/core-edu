@@ -4,10 +4,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src .
+COPY src src
 
 RUN addgroup -g 31541 user
-RUN adduser -DH -u 31541 user
+RUN adduser -DH -u 31541 -G user user
 RUN chown -R user:user .
 USER user
 
