@@ -57,6 +57,7 @@ if GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET:
         client_kwargs={'scope': 'read:user user:email'},
     )
 
+
 @app.get('/with/{provider}')
 async def login(request: Request, provider: str, next: str = f'https://{config('DOMAIN')}/'):
     client = oauth.create_client(provider)
@@ -66,6 +67,7 @@ async def login(request: Request, provider: str, next: str = f'https://{config('
     request.session['next'] = next
     redirect_uri = request.url_for('auth', provider=provider)
     return await client.authorize_redirect(request, redirect_uri)
+
 
 @app.get('/with/{provider}/callback')
 async def auth(request: Request, provider: str):

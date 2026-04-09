@@ -16,7 +16,6 @@ COPY src src
 RUN cargo build --release
 
 
-
 FROM docker.io/library/alpine:3.23
 
 COPY --from=build /srv/api/target/release/coredu /usr/bin/coredu
