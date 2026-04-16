@@ -3,9 +3,6 @@ CREATE USER coredu WITH PASSWORD 'coredu_pass';
 ALTER DATABASE coredu OWNER TO coredu;
 
 
-CREATE TYPE unit_type AS ENUM ('movie', 'season', 'tv', 'ova', 'ona', 'special', 'documentary');
-CREATE TYPE relation_type AS ENUM ('prequel', 'sequel', 'spinoff', 'side_story');
-
 CREATE TABLE Users (
     id SERIAL PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -47,6 +44,7 @@ CREATE TABLE Franchises (
     cat TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TYPE unit_type AS ENUM ('movie', 'season', 'tv', 'ova', 'ona', 'special', 'documentary');
 CREATE TABLE Units (
     id INT PRIMARY KEY,
     fid INT REFERENCES Franchises(id) ON DELETE CASCADE,
@@ -93,12 +91,15 @@ CREATE TABLE Progresses (
     PRIMARY KEY (uid, fid)
 );
 
+CREATE TYPE relation_type AS ENUM ('prequel', 'sequel', 'spinoff', 'mainline');
 CREATE TABLE Relations (
-    source SMALLINT REFERENCES Units(id) ON DELETE CASCADE,
-    target SMALLINT REFERENCES Units(id) ON DELETE CASCADE,
+    source INT REFERENCES Units(id) ON DELETE CASCADE,
+    target INT REFERENCES Units(id) ON DELETE CASCADE,
     relation relation_type NOT NULL,
     PRIMARY KEY (source, target)
 );
+CREATE INDEX idx_relations_source ON Relations(source);
+CREATE INDEX idx_relations_target ON Relations(target);
 
 CREATE TABLE Views (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
