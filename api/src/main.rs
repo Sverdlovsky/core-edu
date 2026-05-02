@@ -85,13 +85,6 @@ struct AppState {
 }
 
 #[derive(Deserialize)]
-struct SeriesQueryParams {
-    offset: Option<i32>,
-    limit: Option<i32>,
-    search: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct LearnQueryParams {
     source: Option<String>,
 }
@@ -106,6 +99,7 @@ struct SubmitResultQueryParams {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let domain = env::var("DOMAIN").context("Environment variable DOMAIN is not set!")?;
     let dsn = env::var("DATABASE_URL").context("Environment variable DATABASE_URL not set!")?;
     let pool = PgPoolOptions::new()
         .max_connections(num_cpus::get() as u32 * 2)
@@ -121,17 +115,13 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin([
-            "https://zenime.su".parse::<HeaderValue>().unwrap(),
-            "https://learn.zenime.su".parse::<HeaderValue>().unwrap(),
+            format!("https://{}", domain).parse::<HeaderValue>().unwrap(),
         ])
         .allow_credentials(true)
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
 
     let app = Router::new()
-        .route("/series", get(series))
-        .route("/packs", get(packs))
-        .route("/info/{filename}", get(series_info))
         .route("/word", get(next_word))
         .route("/result", post(submit_answer))
         .layer(Extension(Arc::new(state)))
@@ -144,79 +134,6 @@ async fn main() -> anyhow::Result<()> {
     serve(listener, app.into_make_service()).await?;
 
     Ok(())
-}
-
-async fn series(
-    jar: CookieJar,
-    Extension(state): Extension<Arc<AppState>>,
-    Query(params): Query<SeriesQueryParams>,
-) -> impl IntoResponse {
-    let email = state.auth.validate(&jar).ok();
-
-    let row: (serde_json::Value,) = match sqlx::query_as("SELECT get_series($1, $2, $3);")
-        .bind(&params.offset)
-        .bind(&params.limit)
-        //.bind(&params.search)
-        .bind(&email)
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("DB error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
-        }
-    };
-
-    (StatusCode::OK, Json(row.0)).into_response()
-}
-
-async fn packs(Extension(state): Extension<Arc<AppState>>) -> impl IntoResponse {
-    let row: (serde_json::Value,) = match sqlx::query_as("SELECT packs_json FROM series_packs_mv;")
-        .fetch_one(&state.db)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("DB error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
-        }
-    };
-
-    (StatusCode::OK, Json(row.0)).into_response()
-}
-
-async fn series_info(
-    jar: CookieJar,
-    Extension(state): Extension<Arc<AppState>>,
-    Path(filename): Path<String>,
-) -> impl IntoResponse {
-    let email = match state.auth.validate(&jar) {
-        Ok(email) => email,
-        Err(_) => {
-            return (StatusCode::FORBIDDEN, "Access denied").into_response();
-        }
-    };
-
-    let admin_email = env::var("ADMIN_EMAIL").unwrap_or_else(|_| "no-reply@gmail.com".to_string());
-    if email != admin_email {
-        return (StatusCode::FORBIDDEN, "Access denied").into_response();
-    }
-
-    let row: (serde_json::Value,) =
-        match sqlx::query_as("SELECT video.get_video_meta(('0x'||$1)::smallint);")
-            .bind(filename)
-            .fetch_one(&state.db)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("DB error: {}", e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response();
-            }
-        };
-
-    (StatusCode::OK, Json(row.0)).into_response()
 }
 
 async fn next_word(

@@ -71,6 +71,7 @@ CREATE TABLE Episodes (
     chnum SMALLINT NOT NULL,
     num SMALLINT NOT NULL,
     br BOOLEAN DEFAULT False,
+    mini BOOLEAN DEFAULT True,
     title TEXT,
     read TEXT,
     extra JSONB,
@@ -143,16 +144,17 @@ CREATE INDEX idx_answers_uid ON answers(uid);
 CREATE INDEX idx_answers_uid_wid ON answers(uid, wid);
 
 CREATE TABLE Word_Progress (
-    user_id INT REFERENCES Users(id) ON DELETE CASCADE,
-    word_id BIGINT REFERENCES Words(id) ON DELETE CASCADE,
+    uid INT REFERENCES Users(id) ON DELETE CASCADE,
+    wid BIGINT REFERENCES Words(id) ON DELETE CASCADE,
     mastery REAL DEFAULT 0,
     confidence REAL DEFAULT 0,
     attempts INT DEFAULT 0,
     attempts_since_last INT DEFAULT 0,
-    PRIMARY KEY (user_id, word_id)
+    cat TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (uid, wid)
 );
-CREATE INDEX idx_wp_user ON word_progress(user_id);
-CREATE INDEX idx_wp_user_word ON word_progress(user_id, word_id);
+CREATE INDEX idx_wp_user ON word_progress(uid);
+CREATE INDEX idx_wp_user_word ON word_progress(uid, wid);
 
 CREATE OR REPLACE FUNCTION get_units (
     in_offset INT DEFAULT 0,
@@ -262,17 +264,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
-CREATE OR REPLACE FUNCTION init_user_progress(v_user_id BIGINT)
+CREATE OR REPLACE FUNCTION init_user_progress(v_uid BIGINT)
 RETURNS VOID AS $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM word_progress WHERE user_id = v_user_id
+    SELECT 1 FROM word_progress WHERE uid = v_uid
   ) THEN
     RETURN;
   END IF;
 
-  INSERT INTO word_progress (user_id, word_id)
-  SELECT v_user_id, wf.wid
+  INSERT INTO word_progress (uid, wid)
+  SELECT v_uid, wf.wid
   FROM word_frequency wf
   ORDER BY wf.freq DESC
   LIMIT 10;
@@ -285,17 +287,17 @@ CREATE OR REPLACE FUNCTION next_word(
 )
 RETURNS JSONB AS $$
 DECLARE
-  v_user_id BIGINT;
+  v_uid BIGINT;
   result JSONB;
 BEGIN
-  SELECT id INTO v_user_id FROM users WHERE email = p_email;
+  SELECT id INTO v_uid FROM users WHERE email = p_email;
 
-  PERFORM init_user_progress(v_user_id);
+  PERFORM init_user_progress(v_uid);
 
   WITH
   stats AS (
     SELECT
-      wp.word_id,
+      wp.wid,
       --w.difficulty,
       wp.mastery,
       wp.confidence,
@@ -307,12 +309,12 @@ BEGIN
       ln(wp.attempts_since_last + 1) as neglect
 
     FROM word_progress wp
-    --JOIN words w ON w.id = wp.word_id
-    WHERE wp.user_id = v_user_id
+    --JOIN words w ON w.id = wp.wid
+    WHERE wp.uid = v_uid
   ),
 
   selected AS (
-    SELECT word_id, mastery
+    SELECT wid, mastery
     FROM stats
     ORDER BY
       --difficulty
@@ -362,7 +364,7 @@ BEGIN
   )
   INTO result
   FROM selected s1
-  JOIN words w ON w.id = s1.word_id
+  JOIN words w ON w.id = s1.wid
   LEFT JOIN random_example re ON re.wid = w.id
   LEFT JOIN senses_agg sa ON sa.wid = w.id;
 
@@ -372,22 +374,22 @@ $$ LANGUAGE plpgsql STABLE;
 
 CREATE OR REPLACE FUNCTION submit_answer(
   p_email TEXT,
-  p_word_id BIGINT,
+  p_wid BIGINT,
   p_response_time DOUBLE PRECISION
 )
 RETURNS JSONB AS $$
 DECLARE
-  v_user_id BIGINT;
+  v_uid BIGINT;
   v_x DOUBLE PRECISION;
   v_score DOUBLE PRECISION;
   v_next JSONB;
 BEGIN
-  SELECT id INTO v_user_id FROM users WHERE email = p_email;
+  SELECT id INTO v_uid FROM users WHERE email = p_email;
 
   v_x := LEAST(GREATEST(p_response_time, 0), 10);
   v_score := 1.1/(1+EXP(v_x - 2.5)); -- Sigmoid + Abjustment
 
-  INSERT INTO Answers(uid, wid, score) VALUES (v_user_id, p_word_id, v_score);
+  INSERT INTO Answers(uid, wid, score) VALUES (v_uid, p_wid, v_score);
 
   UPDATE word_progress
   SET
@@ -396,15 +398,16 @@ BEGIN
 
     confidence = confidence + 0.1 * (1 - confidence),
 
-    mastery = mastery * (1 - (0.05 + 0.1 * confidence)) + v_score * (0.05 + 0.1 * confidence)
-  WHERE user_id = v_user_id
-    AND word_id = p_word_id;
+    -- mastery = mastery * (1 - (0.05 + 0.1 * confidence)) + v_score * (0.05 + 0.1 * confidence)
+    mastery = mastery * (1 - (0.1 + 0.3 * confidence)) + v_score * (0.1 + 0.3 * confidence)
+  WHERE uid = v_uid
+    AND wid = p_wid;
 
   UPDATE word_progress
   SET attempts_since_last = attempts_since_last + 1
-  WHERE user_id = v_user_id AND word_id <> p_word_id;
+  WHERE uid = v_uid AND wid <> p_wid;
 
-  PERFORM add_next_word(v_user_id);
+  PERFORM add_next_word(v_uid);
 
   v_next := next_word(p_email, 1);
 
@@ -418,34 +421,34 @@ FROM example_word_links
 GROUP BY wid;
 CREATE INDEX idx_word_freq ON word_frequency(freq DESC);
 
-CREATE OR REPLACE FUNCTION add_next_word(v_user_id BIGINT)
+CREATE OR REPLACE FUNCTION add_next_word(v_uid BIGINT)
 RETURNS VOID AS $$
 DECLARE
   v_avg_mastery REAL;
-  v_new_word_id BIGINT;
+  v_new_wid BIGINT;
 BEGIN
   SELECT AVG(mastery)
   INTO v_avg_mastery
   FROM word_progress
-  WHERE user_id = v_user_id;
+  WHERE uid = v_uid;
 
-  IF v_avg_mastery IS NULL OR v_avg_mastery <= 0.6 THEN
+  IF v_avg_mastery IS NULL OR v_avg_mastery <= 0.575 THEN
     RETURN;
   END IF;
 
   SELECT wf.wid
-  INTO v_new_word_id
+  INTO v_new_wid
   FROM word_frequency wf
   LEFT JOIN word_progress wp
-    ON wp.word_id = wf.wid
-   AND wp.user_id = v_user_id
-  WHERE wp.word_id IS NULL
+    ON wp.wid = wf.wid
+   AND wp.uid = v_uid
+  WHERE wp.wid IS NULL
   ORDER BY wf.freq DESC
   LIMIT 1;
 
-  IF v_new_word_id IS NOT NULL THEN
-    INSERT INTO word_progress (user_id, word_id)
-    VALUES (v_user_id, v_new_word_id)
+  IF v_new_wid IS NOT NULL THEN
+    INSERT INTO word_progress (uid, wid)
+    VALUES (v_uid, v_new_wid)
     ON CONFLICT DO NOTHING;
   END IF;
 
