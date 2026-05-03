@@ -1,5 +1,5 @@
 <script lang="ts">
-  let domain = window.location.hostname.split(".").slice(-2).join(".");
+  let domain = window.location.hostname;
 
   type Word = {
     lang: string;
@@ -35,7 +35,7 @@
     })
       .then((res) => {
         if (res.status === 401) {
-          window.location.href = `https://auth.${domain}/with/google`;
+          window.location.href = `https://auth.${domain}/with/google?next=https://${domain}`;
           return;
         }
 
@@ -94,7 +94,7 @@
     })
       .then((res) => {
         if (res.status === 401) {
-          window.location.href = `https://auth.${domain}/with/google`;
+          window.location.href = `https://auth.${domain}/with/google?next=https://${domain}`;
           return;
         }
 
