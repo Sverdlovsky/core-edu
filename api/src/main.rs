@@ -22,6 +22,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tower_http::cors::{CorsLayer};
+use socket2::{Domain, Socket, Type};
 use sqlx::{postgres::PgPoolOptions};
 use num_cpus;
 use jsonwebtoken::{
@@ -129,44 +130,74 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(Arc::new(state)))
         .layer(cors);
 
+
     let ipv4 = env::var("LISTEN_IPV4")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
-    let ipv4_addr = env::var("LISTEN_IPV4_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0".into());
-    let ipv4_port = env::var("LISTEN_IPV4_PORT")
-        .unwrap_or_else(|_| "8080".into());
+
+    let ipv4_listener = if ipv4 {
+        let ipv4_addr: SocketAddr = format!(
+            "{}:{}",
+            env::var("LISTEN_IPV4_ADDR").unwrap_or_else(|_| "0.0.0.0".into()),
+            env::var("LISTEN_IPV4_PORT").unwrap_or_else(|_| "8080".into()),
+        )
+        .parse()
+        .context("Invalid IPv4 listen address")?;
+
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+
+        socket.set_reuse_address(true)?;
+        socket.bind(&ipv4_addr.into())?;
+        socket.listen(1024)?;
+
+        let std_listener: StdTcpListener = socket.into();
+        std_listener.set_nonblocking(true)?;
+
+        Some(TcpListener::from_std(std_listener)?)
+    }
 
     let ipv6 = env::var("LISTEN_IPV6")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let ipv6_addr = env::var("LISTEN_IPV6_ADDR")
-        .unwrap_or_else(|_| "::".into());
-    let ipv6_port = env::var("LISTEN_IPV6_PORT")
-        .unwrap_or_else(|_| "8080".into());
 
-    match (ipv4, ipv6) {
-        (true, true) => {
-            //let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
-            let ipv6_listener = TcpListener::bind(format!("[{ipv6_addr}]:{ipv6_port}")).await?;
+    let ipv6_listener = if ipv6 {
+        let ipv6_addr: SocketAddr = format!(
+            "[{}]:{}",
+            env::var("LISTEN_IPV6_ADDR").unwrap_or_else(|_| "::".into()),
+            env::var("LISTEN_IPV6_PORT").unwrap_or_else(|_| "8080".into()),
+        )
+        .parse()
+        .context("Invalid IPv6 listen address")?;
 
+        let socket = Socket::new(Domain::IPV6, Type::STREAM, None)?;
+
+        socket.set_only_v6(true)?;
+        socket.set_reuse_address(true)?;
+        socket.bind(&ipv6_addr.into())?;
+        socket.listen(1024)?;
+
+        let std_listener: StdTcpListener = socket.into();
+        std_listener.set_nonblocking(true)?;
+
+        Some(TcpListener::from_std(std_listener)?)
+    } else {
+        None
+    };
+
+    match (ipv4_listener, ipv6_listener) {
+        (Some(ipv4), Some(ipv6)) => {
             tokio::try_join!(
-            //    serve(ipv4_listener, app.clone()),
-                serve(ipv6_listener, app),
+                serve(ipv4, app.clone()),
+                serve(ipv6, app),
             )?;
         }
-
-        (true, false) => {
-            let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
-            serve(ipv4_listener, app).await?;
+        (Some(ipv4), None) => {
+            serve(ipv4, app).await?;
         }
-
-        (false, true) => {
-            let ipv6_listener = TcpListener::bind(format!("[{ipv6_addr}]:{ipv6_port}")).await?;
-            serve(ipv6_listener, app).await?;
+        (None, Some(ipv6)) => {
+            serve(ipv6, app).await?;
         }
-
-        (false, false) => {
+        (None, None) => {
             anyhow::bail!("Both LISTEN_IPV4 and LISTEN_IPV6 are disabled");
         }
     }
