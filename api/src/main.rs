@@ -157,12 +157,12 @@ async fn main() -> anyhow::Result<()> {
         }
 
         (true, false) => {
-            let ipv4_listener = TcpListener::bind(format!("{v4_addr}:{v4_port}")).await?;
+            let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
             serve(ipv4_listener, app).await?;
         }
 
         (false, true) => {
-            let ipv6_listener = TcpListener::bind(format!("[{v6_addr}]:{v6_port}")).await?;
+            let ipv6_listener = TcpListener::bind(format!("[{ipv6_addr}]:{ipv6_port}")).await?;
             serve(ipv6_listener, app).await?;
         }
 
