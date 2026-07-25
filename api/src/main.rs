@@ -147,11 +147,11 @@ async fn main() -> anyhow::Result<()> {
 
     match (ipv4, ipv6) {
         (true, true) => {
-            let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
+            //let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
             let ipv6_listener = TcpListener::bind(format!("[{ipv6_addr}]:{ipv6_port}")).await?;
 
             tokio::try_join!(
-                serve(ipv4_listener, app.clone()),
+            //    serve(ipv4_listener, app.clone()),
                 serve(ipv6_listener, app),
             )?;
         }
