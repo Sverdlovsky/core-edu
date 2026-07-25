@@ -154,7 +154,9 @@ async fn main() -> anyhow::Result<()> {
         std_listener.set_nonblocking(true)?;
 
         Some(TcpListener::from_std(std_listener)?)
-    }
+    } else {
+        None
+    };
 
     let ipv6 = env::var("LISTEN_IPV6")
         .map(|v| v.eq_ignore_ascii_case("true"))
