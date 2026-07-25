@@ -129,11 +129,47 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(Arc::new(state)))
         .layer(cors);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let ipv4 = env::var("LISTEN_IPV4")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(true);
+    let ipv4_addr = env::var("LISTEN_IPV4_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0".into());
+    let ipv4_port = env::var("LISTEN_IPV4_PORT")
+        .unwrap_or_else(|_| "8080".into());
 
-    let listener = TcpListener::bind(addr).await?;
+    let ipv6 = env::var("LISTEN_IPV6")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let ipv6_addr = env::var("LISTEN_IPV6_ADDR")
+        .unwrap_or_else(|_| "::".into());
+    let ipv6_port = env::var("LISTEN_IPV6_PORT")
+        .unwrap_or_else(|_| "8080".into());
 
-    serve(listener, app.into_make_service()).await?;
+    match (ipv4, ipv6) {
+        (true, true) => {
+            let ipv4_listener = TcpListener::bind(format!("{ipv4_addr}:{ipv4_port}")).await?;
+            let ipv6_listener = TcpListener::bind(format!("[{ipv6_addr}]:{ipv6_port}")).await?;
+
+            tokio::try_join!(
+                serve(ipv4_listener, app.clone()),
+                serve(ipv6_listener, app),
+            )?;
+        }
+
+        (true, false) => {
+            let ipv4_listener = TcpListener::bind(format!("{v4_addr}:{v4_port}")).await?;
+            serve(ipv4_listener, app).await?;
+        }
+
+        (false, true) => {
+            let ipv6_listener = TcpListener::bind(format!("[{v6_addr}]:{v6_port}")).await?;
+            serve(ipv6_listener, app).await?;
+        }
+
+        (false, false) => {
+            anyhow::bail!("Both LISTEN_IPV4 and LISTEN_IPV6 are disabled");
+        }
+    }
 
     Ok(())
 }
